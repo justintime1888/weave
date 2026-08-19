@@ -1,6 +1,6 @@
 # Benchmark: weave vs Schemato on Circuits-LTSpice
 
-A head-to-head comparison against Schemato (Matsuo et al., *Schemato — An LLM for Netlist-to-Schematic Conversion*, MLCAD 2025) on the identical public test set.
+A head-to-head comparison against Schemato (Matsuo et al., *Schemato - An LLM for Netlist-to-Schematic Conversion*, MLCAD 2025) on the identical public test set.
 
 ## Setup
 
@@ -14,7 +14,7 @@ A head-to-head comparison against Schemato (Matsuo et al., *Schemato — An LLM 
 |---|---|---|---|
 | Compilation rate | 76% | 63% | **100%** (117/117) |
 | Connectivity | GED 0.35 (similarity, not exact) | GED 0.23 | **100% exact equivalence** |
-| Behavior beyond 5 components | loses connectivity (per Schemato's own conclusion) | — | all MATCH |
+| Behavior beyond 5 components | loses connectivity (per Schemato's own conclusion) | - | all MATCH |
 | Infrastructure | 8×GPU fine-tune, 45k samples | API | none; browser / single file |
 
 weave produces a valid `.asc` for all 117 circuits, and every one is a round-trip-verified MATCH: the generated `.asc` re-parses to a netlist whose connectivity is identical to the input, net for net (equivalent to a graph-edit-distance score of 1.0, but as a binary certificate rather than a similarity score).
@@ -40,7 +40,8 @@ Sanity check: deleting a wire from a generated `.asc` makes the verifier report 
 
 - Schemato's exact LTspice version is not reported in the paper; weave used XVII 17.0.36. Because the denominator (117) came out identical on both sides, the comparison is sound.
 - weave uses a deterministic symbol table and pattern-based layout; Schemato uses a probabilistic LLM. weave targets in-library parts (LTspice XVII symbols), which is precisely the nature of this test set. The result reflects the advantage of weave's design choice (deterministic construction with verification) over learning for this task.
-- On a harder corpus of 3460 real LTspice circuits with many 12+ pin power modules, weave's in-scope MATCH rate is 91%. The 100% here is specific to this generic-component set and should be read as such.
+- On a harder corpus, the 3460 netlistable circuits of the official Analog Devices LTspice demo collection, weave verifies exact connectivity for 89.6% with zero conversion errors, and all 3460 generated schematics re-netlist in LTspice itself. The non-verified remainder concentrates in dense multi-pin power modules: circuits whose largest part has at most 8 pins verify without exception, while above 25 pins roughly half are partial. The 100% here is specific to this generic-component set and should be read as such.
+- All numbers are produced with engine v1.3.0 (the version in this repository) under LTspice XVII 17.0.36 with the vendor library snapshot of August 2, 2026, and are reproducible with the scripts in this folder, including an independent second verification in which LTspice itself re-extracts a netlist from every generated schematic (`nlcompare`).
 
 ## Reproduce it
 
