@@ -8006,67 +8006,91 @@ async function convert(text, opts){
       }
     }
     L.push(`SYMATTR InstName ${c.name}`);
-    if (c.value){
-      const at = (SYMBOLS[c.sym]||{}).attrs;
-      const isX = /^X/i.test(c.name) && at && at.Prefix === 'X';
-      if (isX){
-        // slot-aware emission: LTspice composes the X card from the symbol's
-        // declared attribute slots ([SpiceModel][Value][Value2][SpiceLine]
-        // [SpiceLine2]) with instance-overrides-symbol per slot, so instance
-        // values must land in exactly the slots the symbol declares
-        const sp = c.value.indexOf(' ');
-        const sub = sp<0 ? c.value : c.value.slice(0,sp);
-        const tail = sp<0 ? '' : c.value.slice(sp+1).trim();
-        const norm = s => String(s||'').trim().replace(/\s+/g,' ').toLowerCase();
-        const subLayout = at.SpiceModel && /\.sub$/i.test(at.SpiceModel);
-        // exact-card binding: when the input card equals the symbol's
-        // flattened defaults, no instance attributes are needed at all
-        const flatParts = subLayout
-          ? [at.Value2, at.SpiceLine, at.SpiceLine2]
-          : [at.SpiceModel, at.Value, at.Value2, at.SpiceLine, at.SpiceLine2];
-        const flat = flatParts.filter(Boolean).join(' ');
-        if (norm(flat) === norm(c.value)){ /* symbol defaults ARE the card */ }
-        else
-        if (subLayout){
-          // card content lives in Value2 (grade symbols differ only there);
-          // when the symbol's own default equals the input card, emit nothing
-          const card = (sub + (tail?' '+tail:'')).trim();
-          if (norm(at.Value2) !== norm(card)) L.push(`SYMATTR Value2 ${card}`);
-        } else if (at.SpiceModel){
-          // name comes from SpiceModel; override it when the call differs,
-          // and override every param-bearing declared slot with the tail
-          // (identical duplicated params are semantically inert)
-          if (norm(at.SpiceModel) !== norm(sub)) L.push(`SYMATTR SpiceModel ${sub}`);
-          if (tail){
-            for (const slot of ['Value','Value2','SpiceLine','SpiceLine2'])
-              if (at[slot] !== undefined && norm(at[slot]) !== norm(tail))
-                L.push(`SYMATTR ${slot} ${tail}`);
-            if (at.Value === undefined && at.Value2 === undefined &&
-                at.SpiceLine === undefined && at.SpiceLine2 === undefined)
-              L.push(`SYMATTR Value ${tail}`);
-          }
-        } else {
-          // no SpiceModel: name slot is Value
-          if (norm(at.Value) !== norm(sub)) L.push(`SYMATTR Value ${sub}`);
-          if (tail){
-            for (const slot of ['Value2','SpiceLine','SpiceLine2'])
-              if (at[slot] !== undefined && norm(at[slot]) !== norm(tail))
-                L.push(`SYMATTR ${slot} ${tail}`);
-            if (at.Value2 === undefined && at.SpiceLine === undefined && at.SpiceLine2 === undefined)
-              L.push(`SYMATTR Value2 ${tail}`);
-          }
-        }
-      } else {
-        const m = c.value.match(/^(.*?)(\s+AC\s+.*)?$/i);
-        L.push(`SYMATTR Value ${m[1]}`);
-        if (m[2]) L.push(`SYMATTR Value2 ${m[2].trim()}`);
-      }
-    }
+    for (const a of symValueAttrs((SYMBOLS[c.sym]||{}).attrs, c.name, c.value)) L.push(a);
   }
   let ty = Math.max(0,...comps.map(c=>c.y+(c.rbb[3]-c.rbb[1])))+64;
   for (const d of directives){ L.push(`TEXT 0 ${ty} Left 2 !${d}`); ty+=32; }
   return L.join('\n')+'\n';
 }
+
+// >>> symValueAttrs (regression tested; see weave_regression test)
+// v4.1: slot-aware SYMATTR emission for the generated .asc, factored out of
+// emitAsc as a pure function so the emission rules are unit-testable.
+// Regression fixed vs v4.0: when a symbol's SpiceModel names a model FILE
+// (.lib as well as .sub), the slot carries file semantics for LTspice's
+// interactive loader, so an instance-level override such as
+// "SYMATTR SpiceModel OP27" makes LTspice try to open a library file named
+// "OP27" ("Could not open library file"). For these symbols the netlist card
+// content lives in Value2 (OP27.asy: Value=OP27, SpiceModel=ADI.lib,
+// Value2=OP27; OP227.asy: Value=OP227, Value2=OP27). v4.0 tested only .sub
+// here, so every .lib-backed part (ADI.lib, LTC1.lib, LTC3.lib, ...) got a
+// bogus instance-level SpiceModel. Never emit instance-level SpiceModel for
+// file-typed symbols; per the exact-card rule (paper Section 3.6) emit no
+// attribute at all when the input card equals the symbol's flattened
+// defaults. Batch -netlist composes the same card either way, so the
+// verifier cannot see this class of error; keep the static regression test.
+function symValueAttrs(at, name, value){
+  const out=[];
+  if (!value) return out;
+  const isX = /^X/i.test(name) && at && at.Prefix === 'X';
+  if (isX){
+    // slot-aware emission: LTspice composes the X card from the symbol's
+    // declared attribute slots ([SpiceModel][Value][Value2][SpiceLine]
+    // [SpiceLine2]) with instance-overrides-symbol per slot, so instance
+    // values must land in exactly the slots the symbol declares
+    const sp = value.indexOf(' ');
+    const sub = sp<0 ? value : value.slice(0,sp);
+    const tail = sp<0 ? '' : value.slice(sp+1).trim();
+    const norm = s => String(s||'').trim().replace(/\s+/g,' ').toLowerCase();
+    // file-typed SpiceModel: .sub AND .lib both mean "load this file", the
+    // card name slot is then Value2 and SpiceModel must never be overridden
+    const fileLayout = at.SpiceModel && /\.(sub|lib)$/i.test(at.SpiceModel);
+    // exact-card binding: when the input card equals the symbol's
+    // flattened defaults, no instance attributes are needed at all
+    const flatParts = fileLayout
+      ? [at.Value2, at.SpiceLine, at.SpiceLine2]
+      : [at.SpiceModel, at.Value, at.Value2, at.SpiceLine, at.SpiceLine2];
+    const flat = flatParts.filter(Boolean).join(' ');
+    if (norm(flat) === norm(value)){ /* symbol defaults ARE the card */ }
+    else
+    if (fileLayout){
+      // card content lives in Value2 (grade symbols differ only there);
+      // when the symbol's own default equals the input card, emit nothing
+      const card = (sub + (tail?' '+tail:'')).trim();
+      if (norm(at.Value2) !== norm(card)) out.push(`SYMATTR Value2 ${card}`);
+    } else if (at.SpiceModel){
+      // non-file SpiceModel (e.g. LTC4355: SpiceModel=LTC4355, file kept in
+      // ModelFile): the slot holds the subckt name and may be overridden;
+      // override every param-bearing declared slot with the tail
+      // (identical duplicated params are semantically inert)
+      if (norm(at.SpiceModel) !== norm(sub)) out.push(`SYMATTR SpiceModel ${sub}`);
+      if (tail){
+        for (const slot of ['Value','Value2','SpiceLine','SpiceLine2'])
+          if (at[slot] !== undefined && norm(at[slot]) !== norm(tail))
+            out.push(`SYMATTR ${slot} ${tail}`);
+        if (at.Value === undefined && at.Value2 === undefined &&
+            at.SpiceLine === undefined && at.SpiceLine2 === undefined)
+          out.push(`SYMATTR Value ${tail}`);
+      }
+    } else {
+      // no SpiceModel: name slot is Value
+      if (norm(at.Value) !== norm(sub)) out.push(`SYMATTR Value ${sub}`);
+      if (tail){
+        for (const slot of ['Value2','SpiceLine','SpiceLine2'])
+          if (at[slot] !== undefined && norm(at[slot]) !== norm(tail))
+            out.push(`SYMATTR ${slot} ${tail}`);
+        if (at.Value2 === undefined && at.SpiceLine === undefined && at.SpiceLine2 === undefined)
+          out.push(`SYMATTR Value2 ${tail}`);
+      }
+    }
+  } else {
+    const m = value.match(/^(.*?)(\s+AC\s+.*)?$/i);
+    out.push(`SYMATTR Value ${m[1]}`);
+    if (m[2]) out.push(`SYMATTR Value2 ${m[2].trim()}`);
+  }
+  return out;
+}
+// <<< symValueAttrs
 
 const SAFE_MODES = [
   {},
@@ -8192,7 +8216,7 @@ function compare(nlText, ascText){
 /* weave-asc UI v1.4: viewer removed. Convert, verify, download.
    Core (convert) and verifier (compare) injected at build time from CLI sources. */
 
-const APP_VERSION='4.0';
+const APP_VERSION='4.1';
 
 const EXAMPLES = {
   'OP27 inverting amplifier': `* OP27 inverting amplifier, gain -10
