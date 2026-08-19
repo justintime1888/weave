@@ -1,101 +1,56 @@
-# weave-cli
+# Weave
 
-Command-line companion to [weave](https://senolgulgonul.github.io/weave), a browser tool that converts a SPICE netlist into an LTspice schematic (`.asc`). The CLI runs the exact same conversion engine as the web app, plus a round-trip verifier, so you can convert circuits in bulk and check connectivity without clicking through the UI one at a time.
+Weave turns a SPICE netlist into an LTspice schematic (`.asc`). It runs entirely in your browser, has no dependencies, and ships as a single HTML file. Paste a netlist, and Weave places the symbols, routes the wires, and hands you a `.asc` you can open directly in LTspice.
 
-## What it does
+Live tool: [senolgulgonul.github.io/weave](https://senolgulgonul.github.io/weave)
 
-Given a SPICE netlist, weave places the symbols, routes the wires with a layered (Sugiyama) graph layout, and writes an `.asc` you can open directly in LTspice. Every conversion is then verified: the generated `.asc` is parsed back into a netlist and its connectivity is compared, net for net, against the input. A reported `MATCH` means the schematic is provably connectivity-equivalent to the netlist it came from.
+## Why
 
-## Install
+LTspice reads and writes netlists, but going the other way, from a bare netlist back to a drawable schematic, is not something it does. If you have a netlist from a textbook, a generated circuit, a colleague, or an old project whose `.asc` was lost, you normally have to place every part and draw every wire by hand. Weave does that first pass for you. The result is a real schematic you can inspect, tidy, and simulate, not a picture.
 
-Node.js 18+ is required. Only one dependency, elkjs.
+## How it works
 
-```
-npm install
-```
+The pipeline is short and each stage has one job. The netlist is parsed into components and nets. Nets are classified as ground, supply rail, or signal. Signal components become nodes in a graph that [elkjs](https://github.com/kieler/elkjs) lays out with its layered (Sugiyama) algorithm, giving left-to-right signal flow and orthogonal wire routing. Feedback loops, divider legs, hanging shunts, and supply corners are handled as placement patterns rather than graph nodes, which keeps the main signal chain clean. Everything snaps to LTspice's 16-unit grid, and the `.asc` is emitted with the correct symbol names, rotations, and pin coordinates.
 
-## Use
+The part that makes Weave trustworthy is the **round-trip verifier**. After generating the `.asc`, Weave parses its own output back into a netlist and compares the connectivity, net by net, against the original. If every net matches, you get a green badge. If some nets differ, you get an honest count of how many need attention. The schematic is always downloadable either way, because a schematic that is 90% correct is a far better starting point than a blank sheet.
 
-```
-node weave.js convert <in.net> [out.asc]     convert one netlist
-node weave.js verify  <in.net> <schem.asc>   check an .asc against a netlist
-node weave.js batch   <dir> [results.tsv]    convert + verify every .net in a folder
-```
+## Symbol library
 
-Examples:
+Weave embeds a symbol table for **5093 LTspice symbols** (op-amps, references, comparators, power products, switches, optocouplers, digital blocks, and the standard passives and sources), so most parts resolve by name with no setup. For each symbol the table stores pin offsets, SpiceOrder, the bounding box, and the symbol's declared attribute slots. The attribute slots matter for fidelity: LTspice composes a subcircuit's netlist card from the symbol's SpiceModel, Value, Value2, and SpiceLine attributes, with instance attributes overriding the symbol's per slot, and Weave writes component values into exactly the slots each symbol declares. A call whose parameters equal a grade symbol's own defaults binds that symbol with no instance attributes at all, the same way the vendor's own demo schematics are drawn.
 
-```
-node weave.js convert op27.net op27.asc
-node weave.js verify  op27.net op27.asc
-node weave.js batch   ./netlists results.tsv
-```
+The table is generated, not hand-maintained: `cli/weave_symextract_20260819_1030.js` scans an installed LTspice symbol library and rebuilds it in seconds, so you can regenerate against your own library version at any time. Symbols retired by a library update are kept but marked, and resolution prefers live ones.
 
-The safe-mode ladder runs automatically. If the default layout leaves a connectivity gap, weave retries with progressively simpler layout modes and keeps the first result the verifier accepts. Correctness is guaranteed at every rung, so a `MATCH` is always a true connectivity match, never a heuristic guess.
+When a netlist calls a part whose exact `.asy` pin count differs, or a part the table does not know, Weave falls back to a generic rectangular block and writes a companion `.asy` file next to the schematic, so the fallback also opens in LTspice with no library edits. Connectivity is preserved either way.
 
-## Reproducing the Circuits-LTSpice benchmark
+## Supported netlist elements
 
-This reproduces the head-to-head comparison against Schemato (MLCAD 2025) on the identical public test set.
+Resistors, capacitors, inductors, voltage and current sources, diodes; BJTs and MOSFETs (`Q`, `M`, including LTspice's substrate-appended 4-node export); JFETs (`J`); subcircuits (`X`, with parameter tails); dependent sources (`E`, `G`, `F`, `H`); behavioral sources (`B`); switches (`S`, `W`); transmission lines (`T`); coupling and special-function devices (`K`, `A`). SPICE `+` line continuations are joined automatically.
 
-1. Clone the test circuits:
+## Safe-mode ladder
 
-   ```
-   git clone https://github.com/mick001/Circuits-LTSpice.git
-   ```
+Simple circuits lay out perfectly with all placement patterns active. Dense or unusual ones sometimes do not. Rather than fail, Weave climbs a ladder of progressively simpler layout modes, switching patterns off one by one down to pure elkjs, and keeps the first result the verifier accepts. Correctness is guaranteed at every rung by the verifier, so a safe-mode result is never wrong, only plainer.
 
-2. Generate netlists from the `.asc` files using LTspice's own netlister (this is the same step Schemato used; it removes any dependence on weave's own extractor). On Windows PowerShell:
+## Usage
 
-   ```powershell
-   $exe = "C:\path\to\XVIIx64.exe"
-   $src = "C:\path\to\Circuits-LTSpice"
-   New-Item -ItemType Directory -Force -Path "$src\netlist" | Out-Null
-   Get-ChildItem -Path $src -Recurse -Filter *.asc | ForEach-Object {
-     $net = [System.IO.Path]::ChangeExtension($_.FullName, ".net")
-     $p = Start-Process -FilePath $exe -ArgumentList "-netlist","`"$($_.FullName)`"" -PassThru
-     if (-not $p.WaitForExit(15000)) { $p.Kill() }
-     if (Test-Path $net) { Move-Item $net "$src\netlist" -Force }
-   }
-   ```
+Open the HTML file in any modern browser. Pick one of the built-in examples (inverting amp, instrumentation amp, shunt reference, Sallen-Key, common-emitter amp, difference amp, and more) or paste your own netlist. The badge tells you the connectivity status; the button downloads a timestamped `.asc`. Open it in LTspice and simulate.
 
-   Circuits whose symbols are missing from your LTspice install cannot be netlisted and are skipped, exactly as in the Schemato methodology. With LTspice XVII 17.0.36 this yields 117 netlists out of 131, matching the count reported by Schemato.
+Nothing is uploaded anywhere. The entire tool, including the symbol library and the layout engine, runs locally in the page.
 
-3. Run the benchmark:
+## Command line
 
-   ```
-   node weave.js batch "C:\path\to\Circuits-LTSpice\netlist" results.tsv
-   ```
+For batch conversion and to reproduce the benchmarks, see [`cli/`](cli/), a Node.js
+tool that runs the same conversion engine. It converts a whole folder of netlists at
+once and verifies each result:
 
-The summary line reports the compilation rate and the round-trip-verified MATCH rate. On the 117 real-LTspice netlists, weave reports 100% compilation and 100% connectivity, versus Schemato's 76% compilation and 0.35 GED similarity on the same set.
+    node weave.js batch ./netlists results.tsv
 
-## How MATCH is defined
+See [`cli/README.md`](cli/README.md) for setup and [`cli/BENCHMARK.md`](cli/BENCHMARK.md)
+for the head-to-head comparison against Schemato on the Circuits-LTSpice test set.
 
-The verifier parses the generated `.asc` back into a connectivity graph (wires, flags, and symbol pins are unioned into nets by coordinate), then partitions both the generated and the original netlist into nets and compares the partitions. If they are identical, connectivity is preserved and the result is a MATCH. This is a binary, exact check, equivalent to a graph-edit-distance score of 1.0, not a similarity measure.
+## Known limits
 
-## Measurement and maintenance scripts
-
-Three standalone scripts reproduce the numbers reported in the paper and keep the symbol table current:
-
-```
-node weave_bench_20260818_1720.js <netlist-dir> <out-dir> <results.csv> --modes all
-```
-converts and verifies a whole corpus, writing per-circuit outcome, terminating ladder rung, runtime, and the aesthetic metrics (crossings, bends, wire length) to a CSV. `--modes 5` runs the pure-layout baseline and `--modes 0` the no-ladder ablation.
-
-```
-node nlcompare_20260819_1200.js --batch <netlist-dir> <asc-dir> <out.csv>
-```
-is the independent second verification: it compares the netlists LTspice itself extracts from the generated schematics against the inputs, connectivity and parameters, normalizing a small set of documented LTspice netlister artifacts (duplicated model names, repeated parameter tails, no-connect flag renumbering, default source letters).
-
-```
-node weave_symextract_20260819_1030.js <lib\sym dir> symbols.json --diff old.json
-```
-rebuilds the symbol table from your installed LTspice library (pins, SpiceOrder, bounding box, attribute slots) and, with `--diff`, reports what a library update changed.
-
-## Files
-
-- `weave.js`: the CLI
-- `core.js`: the conversion engine (parser, layout, slot-aware `.asc` emitter, safe-mode ladder)
-- `verify.js`: the round-trip connectivity verifier
-- `symbols.json`: symbol table for 5093 LTspice symbols (pin offsets, SpiceOrder, bounding box, attribute slots; regenerable with `weave_symextract`)
+Very dense multi-pin power modules (large `LTM`/`LTC` regulators with many repeated nets) are the one class Weave does not yet lay out cleanly; these produce a partial result, with the differing nets listed, that needs manual fixup. Long value texts can occasionally overlap a nearby wire or symbol in crowded regions; this is cosmetic, does not affect connectivity, and is a one-drag fix in LTspice. If your LTspice library differs from the table's snapshot, regenerate the table with the extraction script in `cli/`.
 
 ## License
 
-MIT. elkjs is bundled at install time under the Eclipse Public License.
+elkjs is bundled under the Eclipse Public License. Weave's own code is released under the MIT License.
