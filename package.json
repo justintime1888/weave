@@ -1,0 +1,12 @@
+{
+  "name": "weave",
+  "version": "1.0.0",
+  "description": "Verified SPICE netlist-to-schematic converter",
+  "scripts": {
+    "convert": "node cli/weave.js convert",
+    "verify": "node cli/weave.js verify",
+    "batch": "node cli/weave.js batch",
+    "test": "node cli/weave.js batch cli/examples"
+  },
+  "license": "MIT"
+}

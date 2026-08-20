@@ -34,9 +34,14 @@ textarea{resize:none}
 .vgutter:hover{background:#b9c4b0}
 .hgutter{flex:0 0 6px;cursor:row-resize;background:#d6d6ce}
 .hgutter:hover{background:#b9c4b0}
+.btn-file{background:#2a5c90;color:#fff;border-color:#1e4570;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.btn-file:hover{background:#1d4670}
+.pane.drag-over{background:#e3edf7!important;outline:2px dashed #2a5c90;outline-offset:-4px}
 </style></head><body>
 <header><h1>weave</h1><span id="ver"></span><span class="sub">SPICE netlist &rarr; LTspice .asc &middot; elkjs layout &middot; fully client-side</span></header>
 <div class="toolbar">
+  <input type="file" id="fileinput" accept=".cir,.net,.sp,.spice,.txt,*" style="display:none">
+  <button id="btnOpen" class="btn-file" title="Browse and open a .cir or .net file from your computer">&#128194; Open .cir / .net file</button>
   <select id="ex"></select>
   <button id="go">Convert</button>
   <button id="dl">Download .asc</button>
@@ -47,7 +52,7 @@ textarea{resize:none}
 </div>
 <div id="workspace">
   <div id="toprow">
-    <div class="pane" id="leftpane"><div class="label">netlist (input)</div><textarea id="nl" spellcheck="false"></textarea></div>
+    <div class="pane" id="leftpane"><div class="label" id="inputlabel">netlist (input)</div><textarea id="nl" spellcheck="false" placeholder="Paste SPICE netlist (.cir / .net) here, click 'Open .cir / .net file', or drag & drop a file..."></textarea></div>
     <div class="vgutter" id="vgut"></div>
     <div class="pane" id="rightpane"><div class="label">schematic (.asc output)</div><pre id="ascview"></pre></div>
   </div>
@@ -8299,6 +8304,7 @@ function clog(msg, cls){
   c.appendChild(line);
   c.scrollTop=c.scrollHeight;
 }
+let currentFileName = null;
 async function run(){
   const src=document.getElementById('nl').value;
   const status=document.getElementById('status');
@@ -8346,7 +8352,8 @@ function download(){
   for(let i=0;i<lastAsc.length;i++){const c=lastAsc.charCodeAt(i); bytes[i]=c<256?c:63;}
   const b=new Blob([bytes],{type:'application/octet-stream'});
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(b); a.download='schematic_'+stamp+'.asc'; a.click();
+  a.href=URL.createObjectURL(b); const baseName = currentFileName ? currentFileName.replace(/\.[^/.]+$/, '') : ('schematic_' + stamp);
+  a.download = baseName + '.asc'; a.click();
   URL.revokeObjectURL(a.href);
   // v3.3: companion .asy for synthetic blocks, saved beside the .asc so the
   // schematic opens in LTspice with no library edits
@@ -8364,11 +8371,61 @@ function download(){
 window.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('ver').textContent='v'+APP_VERSION;
   document.getElementById('nsym').textContent=Object.keys(SYMBOLS).length+' symbols loaded';
+
+  function loadFile(file){
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e){
+      currentFileName = file.name;
+      document.getElementById('nl').value = e.target.result;
+      document.getElementById('inputlabel').textContent = 'netlist (input) - ' + file.name;
+      clog('Loaded ' + file.name + ' (' + file.size + ' bytes)', 'dim');
+      run();
+    };
+    reader.readAsText(file);
+  }
+
+  const fileInput = document.getElementById('fileinput');
+  document.getElementById('btnOpen').onclick = () => {
+    fileInput.value = '';
+    fileInput.click();
+  };
+  fileInput.onchange = e => {
+    if (e.target.files && e.target.files.length > 0) {
+      loadFile(e.target.files[0]);
+    }
+  };
+
+  const leftPane = document.getElementById('leftpane');
+  ['dragenter', 'dragover'].forEach(name => {
+    window.addEventListener(name, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      leftPane.classList.add('drag-over');
+    });
+  });
+  ['dragleave'].forEach(name => {
+    window.addEventListener(name, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      leftPane.classList.remove('drag-over');
+    });
+  });
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    leftPane.classList.remove('drag-over');
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      loadFile(e.dataTransfer.files[0]);
+    }
+  });
   const sel=document.getElementById('ex');
   const optNew=document.createElement('option');
   optNew.textContent='New (clear)'; sel.appendChild(optNew);
   for(const k of Object.keys(EXAMPLES)){ const o=document.createElement('option'); o.textContent=k; sel.appendChild(o); }
   sel.onchange=()=>{
+    currentFileName = null;
+    document.getElementById('inputlabel').textContent = 'netlist (input)';
     if (sel.value==='New (clear)'){
       lastAsc='';
       document.getElementById('nl').value='';

@@ -1,0 +1,12 @@
+* Sallen-Key Low-Pass Active Filter (.cir)
+V1 in 0 AC 1
+Vcc vcc 0 15
+Vee vee 0 -15
+R1 in n1 10k
+R2 n1 nin 10k
+C1 n1 out 10n
+C2 nin 0 10n
+X1 0 nin vcc vee out UniversalOpamp2
+.model UniversalOpamp2 level=2
+.ac dec 10 10 100k
+.end

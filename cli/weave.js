@@ -68,7 +68,7 @@ async function main() {
 
   } else if (cmd === 'batch') {
     if (!a1) return usage();
-    const files = fs.readdirSync(a1).filter(f => f.endsWith('.net')).sort();
+    const files = fs.readdirSync(a1).filter(f => /\.(net|cir|sp|spice|txt)$/i.test(f)).sort();
     const rows = [];
     let produced = 0, matched = 0;
     for (const f of files) {
@@ -82,7 +82,7 @@ async function main() {
       } catch (e) {
         verdict = `ERROR\t${String(e.message || e).slice(0, 70).replace(/\s+/g, ' ')}`;
       }
-      rows.push(f.replace(/\.net$/, '') + '\t' + verdict);
+      rows.push(f.replace(/\.(net|cir|sp|spice|txt)$/i, '') + '\t' + verdict);
     }
     const tsv = rows.join('\n') + '\n';
     if (a2) fs.writeFileSync(a2, tsv); else process.stdout.write(tsv);

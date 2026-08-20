@@ -1,0 +1,15 @@
+* BJT Common Emitter Amplifier
+Vcc vcc 0 12V
+Vin in 0 SIN(0 10m 1k)
+R1 vcc base 47k
+R2 base 0 10k
+Rc vcc coll 3.3k
+Re emit 0 1k
+Ce emit 0 10u
+Cin in base 10u
+Cout coll out 10u
+Q1 coll base emit 0 2N2222
+RL out 0 10k
+.model 2N2222 NPN
+.tran 5m
+.end
